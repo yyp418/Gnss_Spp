@@ -39,7 +39,7 @@ namespace Gnss_Spp
                 //gps toolbox
                 gpst_t temp_t_orb = ToGpsTime(temp_orb.ti);
                 double ttt = temp.p / CommonData.LIGHT;
-                double dt0 = temp_t.sec - temp.p / CommonData.LIGHT - temp_t_orb.sec;
+                double dt0 = temp_t.sec - temp.p / CommonData.LIGHT - temp_t_orb.sec-14;
                 if (dt0 > 302400) dt0 -= 604800;
                 if (dt0 < -302400) dt0 += 604800;
                 double dtTmp = dt0;
@@ -53,16 +53,19 @@ namespace Gnss_Spp
 
                 double n = temp_orb.detn + Sqrt(CommonData.GM / Pow(temp_orb.sqrt_as, 6));
                 double mk = temp_orb.M0 + n * tk;
-                if (mk > 2 * CommonData.pi) mk -= 2 * CommonData.pi;
-                if (mk < 0) mk += 2 * CommonData.pi;
-
+                //if (mk > 2 * CommonData.pi) mk -= 2 * CommonData.pi;
+                //if (mk < 0) mk += 2 * CommonData.pi;
+                //特别注意，我认为这两行很有必要，只是暂时性地删除
+                //mk = 4.379857;
                 double E = 0, ETmp = 10;
                 while (Abs(ETmp - E) > 1e-13)
                 {
                     ETmp = E;
                     E -= (E - temp_orb.es * Sin(E) - mk) / (1 - temp_orb.es * Cos(E));
                 }
-                double vk = Acos((Cos(E) - temp_orb.es) / (1 - temp_orb.es * Cos(E)));
+                //因为范围是-pi到pi，所以使用atan2
+                double vk = Atan2(Sqrt(1-temp_orb .es* temp_orb.es)*Sin(E),(Cos(E)-temp_orb.es));
+                //double vk = Acos((Cos(E) - temp_orb.es) / (1 - temp_orb.es * Cos(E)));
                 double omegak = vk + temp_orb.w;
                 double duk = temp_orb.cus * Sin(2 * omegak) + temp_orb.cuc * Cos(2 * omegak);
                 double drk = temp_orb.crs * Sin(2 * omegak) + temp_orb.crc * Cos(2 * omegak);
@@ -92,6 +95,7 @@ namespace Gnss_Spp
                 {
                     double f = -5 * CommonData.pi / 180;
                     double p = CommonData.OMGe * tk;
+                    double L = temp_orb.omega0 + tk * temp_orb.detomega - CommonData.OMGe * temp_orb.toe;//这步存疑，和书上不一致
                     var RX = new DenseMatrix(3, 3);
                     var RZ = new DenseMatrix(3, 3);
                     RX[0, 0] = 1; RX[0, 1] = 0; RX[0, 2] = 0;
@@ -103,17 +107,19 @@ namespace Gnss_Spp
                     RZ[2, 0] = 0; RZ[2, 1] = 0; RZ[2, 2] = 1;
                     var GEOP= new DenseMatrix(3, 1);
                     var P = new DenseMatrix(3, 1);
-                    P[0, 0] = A[i, 0]; P[1, 0] = A[i, 1]; P[2, 0] = A[i, 2];
+                    P[0, 0] = xk * Cos(L) - yk * Cos(ik) * Sin(L);
+                    P[1, 0] = xk * Sin(L) + yk * Cos(ik) * Cos(L);
+                    P[2, 0] = yk * Sin(ik);
                     GEOP = RZ * RX * P;
                     A[i, 0] = GEOP[0, 0]; A[i, 1]= GEOP[1, 0]; A[i, 2]= GEOP[2, 0];
                 }
                 //求解钟差
                 double F = -2 * Sqrt(CommonData.GM) / CommonData.LIGHT / CommonData.LIGHT;
-                double dtr = F * temp_orb.es * temp_orb.sqrt_as * Sin(E);//这里的E是计算得到的偏近点角
+                double dtr = F * temp_orb.es * temp_orb.sqrt_as * Sin(E)* CommonData.LIGHT;//这里的E是计算得到的偏近点角
                 tk= temp.time.ToUnixTimeSeconds() - temp.p / CommonData.LIGHT - dt-temp_orb.ti.ToUnixTimeSeconds();
                 //tk = timediff(ts, eph.toc);//这里的ts是观测时间减去距离和插值以及toc
                 double dts = temp_orb.f0 + temp_orb.f1 * tk + temp_orb.f2 * tk * tk;
-                A[i, 3] = dts * CommonData.LIGHT + dts;//未减去群波延时校正值
+                A[i, 3] = dts * CommonData.LIGHT -dtr;//未减去群波延时校正值
             }
 
             //按最低仰角排除卫星，即过滤掉低仰角卫星
@@ -141,13 +147,8 @@ namespace Gnss_Spp
                     error_count++;
                 }
             }
-            //data.Obs_file[eph_num].num_true = new int();
-            //data.Obs_file[eph_num].num_true = data.Obs_file[eph_num].num - error_count;
             var SatPosClkValid = new DenseMatrix(data.Obs_file[eph_num].num-error_count, 4);
 
-            // data.Obs_file[eph_num].idx = new List<int>();
-            //obss[epoIndex].validIndex = new int[obss[epoIndex].n];
-            //data.Obs_file[eph_num].idx = new List<int>();
             List<int> idx = new List<int>();
             for (int i=0,j=0;i< data.Obs_file[eph_num].num;i++)
             {
@@ -159,7 +160,7 @@ namespace Gnss_Spp
                     SatPosClkValid[j, 2] = A[i, 2];
                     SatPosClkValid[j, 3] = A[i, 3];
                     j++;
-                    idx.Add(i);
+                    idx.Add(i);//这里是存储序号
                 }
             }
             data.Obs_file[eph_num].idx=idx;
@@ -178,10 +179,11 @@ namespace Gnss_Spp
             B = new DenseMatrix(nValid, 4);
             L = new DenseMatrix(nValid, 1);
 
+
             double []rr=new double [4];
             rr[0] = data.Appro_position[0];
             rr[1] = data.Appro_position[1];
-            rr[2] = data.Appro_position[3];
+            rr[2] = data.Appro_position[2];
             rr[3] = 0;
             double[] rr_blh=new double[3];
             Ece2blh(rr, out rr_blh);
@@ -196,7 +198,7 @@ namespace Gnss_Spp
                 rs[1] = SatPosClkValid[i, 1];
                 rs[2] = SatPosClkValid[i, 2];
 
-                double[] vec = new double[3];
+                double[] vec = new double[3];//vec不太一致，所以导致后面的值会有偏差，大约0.5左右
                 string prn = temp.obs[ind].PRN;
                 double SagEffectCor;
                 double dis = Geodist(rs, rr, out vec,out SagEffectCor);
@@ -225,7 +227,13 @@ namespace Gnss_Spp
             }
         }
 
+        public void FormWeight(int epo_num,DenseMatrix SatPosClkvaild)
+        {
+            double[] ura = new double[16]; 
+            ura = new double[] { 2.4, 3.4, 4.85, 6.85, 9.65, 13.65, 24.0, 48.0, 96.0, 192.0, 384.0, 768.0, 1536.0, 3072.0, 6144.0, 0.0 };
 
+
+        }
         //完成时间的转换,折磨死人.修正，因为处理的是观测数据，已经是gps时间，无需闰秒
         public gpst_t  ToGpsTime(DateTimeOffset dateTime)
             {
@@ -277,7 +285,7 @@ namespace Gnss_Spp
                 e[i] = rs[i] - rr[i];
             }
             distance = Sqrt(Pow(e[0], 2) + Pow(e[1], 2) + Pow(e[2], 2));
-            for (int i = 0; i < 3; i++) e[i] = e[i] / distance;
+           // for (int i = 0; i < 3; i++) e[i] = e[i] / distance;
             //SagEffectCor = CommonData.OMGe * (rs[0] * rr[1] - rs[1] * rr[0]) / CommonData.LIGHT;
             return distance+ SagEffectCor;
         }
@@ -285,20 +293,20 @@ namespace Gnss_Spp
         public bool Ece2blh(double[]rr, out double[]blh)
         {
             blh = new double[3];
-            double e2 = CommonData.RE_WGS84 * (2 - CommonData.RE_WGS84);
-            double p = Pow(rr[0], 2) + Pow(rr[1], 2);
-            blh[1] = p*p> 1E-12 ? Atan(rr[1]/rr[0]):0.0;
+            double e2 = CommonData.FE_WGS84 * (2 - CommonData.FE_WGS84);
+            double p = Sqrt(Pow(rr[0], 2) + Pow(rr[1], 2));
+            blh[1] = p*p> 1E-12 ? Atan2(rr[1],rr[0]):0.0;
             double phi = 0; double temp=0;
             double N,h;
-            while (Abs(temp-phi) > 1E-4)
+            do
             {
                 temp = phi;
-                N = CommonData.RE_WGS84 / Sqrt(1-e2*Sin(phi));
+                N = CommonData.RE_WGS84 / Sqrt(1 - e2 * Pow(Sin(phi),2));
                 h = p / Cos(phi) - N;
-                phi= Atan(rr[2] / p * (1 - e2 * (N/(N+h))));
-            }
+                phi = Atan(rr[2] /( p * (1 - e2 * (N / (N + h)))));
+            } while (Abs(temp - phi) > 1E-4);
             blh[0] = phi;
-            blh[2] = p / Cos(blh[0]) - CommonData.RE_WGS84 / Sqrt(1 - e2 * Sin(phi));
+            blh[2] = p / Cos(blh[0]) - CommonData.RE_WGS84 / Sqrt(1 - e2 * Pow(Sin(phi),2));
             return true;
         }
 
@@ -320,7 +328,9 @@ namespace Gnss_Spp
             enu = S * mat_v;
 
             double norm = Sqrt(Pow(enu[0,0],2)+ Pow(enu[1, 0], 2)+ Pow(enu[2, 0], 2));
-            double alph = (Pow(enu[0, 0], 2) + Pow(enu[1, 0], 2)) < 1E-12 ? 0.0 : Atan((enu[0,0]/ norm)/ (enu[1,0] / norm));
+            double tt = enu[0, 0];
+            double alph = (Pow(enu[0, 0], 2) + Pow(enu[1, 0], 2)) < 1E-12 ? 0.0 : Atan2((enu[0,0]/ norm),(enu[1,0] / norm));
+            if (alph < 0) alph += CommonData.pi * 2;
             ael[0] = alph;
             ael[1] = Asin(enu[2,0] / norm);
         }
@@ -337,7 +347,7 @@ namespace Gnss_Spp
             e = 6.108 * Exp((17.15 * temp - 4684.0) / (temp-38.45))*humi;
 
             //z为天顶角
-             z = CommonData.pi / 2-azel[2];
+             z = CommonData.pi / 2-azel[1];
             trph = 0.0022768 * pres / (1.0 - 0.00266 * Cos(2.0 * pos[0]) - 0.00028 * hgt / 1E3) / Cos(z);
             trpw = 0.002277 * (1255.0 / temp + 0.05) * e / Cos(z);
             return trph + trpw;

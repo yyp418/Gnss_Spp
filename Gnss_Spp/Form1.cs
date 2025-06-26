@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Diagnostics;
+using MathNet.Numerics.LinearAlgebra.Double;
 
 namespace Gnss_Spp
 {
@@ -40,7 +41,10 @@ namespace Gnss_Spp
         private void sPPToolStripMenuItem_Click(object sender, EventArgs e)
         {
             Calute cal = new Calute();
-            cal.cal_epoch(0, data);
+            DenseMatrix SatPosClkValid = cal.cal_epoch(0, data);
+            DenseMatrix B;
+            DenseMatrix L;
+            cal.Fromcoefficient(0,  SatPosClkValid, data, out  B, out L, out double[] varIon, out double[] varTrp);
         }
     }
      
